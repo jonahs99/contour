@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/png"
 	"math"
 	"math/rand"
 	"os"
 
-	"github.com/fogleman/gg"
+	svg "github.com/ajstarks/svgo"
 
 	"github.com/jonahs99/vec"
 )
@@ -45,15 +44,17 @@ func circle(rad float64, n int) poly {
 	return p
 }
 
-func drawPoly(ctx *gg.Context, p poly) {
+func drawPoly(canvas *svg.SVG, p poly) {
 	n := len(p.verts)
-	ctx.MoveTo(p.verts[n-1].X, p.verts[n-1].Y)
+
+	x, y := make([]int, n), make([]int, n)
+
 	for i := 0; i < n; i++ {
-		ctx.LineTo(p.verts[i].X, p.verts[i].Y)
+		x[i] = int(p.verts[i].X)
+		y[i] = int(p.verts[i].Y)
 	}
 
-	ctx.SetColor(color.Black)
-	ctx.Stroke()
+	canvas.Polyline(x, y, "fill: none; stroke: black; stroke-width: 1;")
 }
 
 func downSample(img image.Image, n int) image.Image {
@@ -84,21 +85,15 @@ func downSample(img image.Image, n int) image.Image {
 }
 
 func main() {
-	w, h := 600.0, 600.0
-	ctx := gg.NewContext(int(w), int(h))
-	ctx.Translate(w/2, h/2)
-	ctx.Scale(2, 2)
-
-	ctx.SetColor(color.White)
-	ctx.Clear()
+	w, h := 1200, 1200
 
 	contours := []poly{circle(12, 9)}
 
-	targetDist := 5.0
+	targetDist := 6.0
 
 	P, D := 0.016, -0.08
 
-	nContours := 32
+	nContours := 72
 
 	for k := 1; k < nContours; k++ {
 		follow := contours[len(contours)-1]
@@ -157,22 +152,23 @@ func main() {
 		fmt.Printf("%d contours drawn.\n", k)
 
 	}
-	lineWidth := 2.0
-	//minWidth := 0.2
-	ctx.SetLineWidth(lineWidth)
-	for _, c := range contours {
-		//ctx.SetLineWidth(float64(nContours-i)/float64(nContours)*lineWidth + minWidth)
-		drawPoly(ctx, c)
+
+	path := fmt.Sprintf("out.svg")
+	file, err := os.Create(path)
+	if err != nil {
+		fmt.Printf("Could not create the output file: '%v'\n", err)
+		os.Exit(-1)
 	}
 
-	img := ctx.Image()
-	path := fmt.Sprintf("out-%d.png", 0)
-	file, _ := os.Create(path)
-	png.Encode(file, img)
+	canvas := svg.New(file)
+	canvas.Start(w, h)
+	canvas.Translate(w/2, h/2)
 
-	img = downSample(img, 2)
-	path = fmt.Sprintf("aa-%d.png", 0)
-	file, _ = os.Create(path)
-	png.Encode(file, img)
+	for _, c := range contours {
+		drawPoly(canvas, c)
+	}
+
+	canvas.Gend()
+	canvas.End()
 
 }
