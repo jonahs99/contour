@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"image"
-	"image/color"
 	"math"
 	"math/rand"
 	"os"
@@ -13,145 +11,103 @@ import (
 	"github.com/jonahs99/vec"
 )
 
-type poly struct {
-	verts []vec.Vec
-	lines []vec.Vec
-}
-
-func (p *poly) computeLines() {
-	p.lines = make([]vec.Vec, len(p.verts))
-	if len(p.verts) == 0 {
-		return
-	}
-	for i := 0; i < len(p.verts); i++ {
-		j := (i + 1) % len(p.verts)
-		p.lines[i] = p.verts[j]
-		p.lines[i].Sub(p.verts[i])
-	}
-}
-
-func circle(rad float64, n int) poly {
-	innerAngle := math.Pi * 2 / float64(n)
-	p := poly{}
-	for i := 0; i < n; i++ {
-		t := innerAngle*float64(i) + innerAngle/2
-		v := vec.NewPolar(rad, t)
-		v.X += rand.Float64() * 1
-		v.Y += rand.Float64() * 1
-		p.verts = append(p.verts, v)
-	}
-	p.computeLines()
-	return p
-}
-
-func drawPoly(canvas *svg.SVG, p poly) {
-	n := len(p.verts)
-
-	x, y := make([]int, n), make([]int, n)
-
-	for i := 0; i < n; i++ {
-		x[i] = int(p.verts[i].X)
-		y[i] = int(p.verts[i].Y)
-	}
-
-	canvas.Polyline(x, y, "fill: none; stroke: black; stroke-width: 1;")
-}
-
-func downSample(img image.Image, n int) image.Image {
-	bounds := img.Bounds()
-	w, h := bounds.Max.X, bounds.Max.Y
-	n2 := uint32(n * n)
-	out := image.NewRGBA(image.Rect(0, 0, w/n, h/n))
-	for y := 0; y < h/n; y++ {
-		for x := 0; x < w/n; x++ {
-			var r, g, b uint32
-			for i := 0; i < n; i++ {
-				for j := 0; j < n; j++ {
-					sample := img.At(x*n+j, y*n+i)
-					sr, sg, sb, _ := sample.RGBA()
-					r += sr
-					g += sg
-					b += sb
-				}
-			}
-			r /= n2 * 256
-			g /= n2 * 256
-			b /= n2 * 256
-			c := color.RGBA{uint8(r), uint8(g), uint8(b), 255}
-			out.SetRGBA(x, y, c)
-		}
-	}
-	return out
-}
-
 func main() {
-	w, h := 1200, 1200
+	targetDist := 7.0
+	minTargetDistance := 1.0
+	//P, D := 0.016, -0.08
 
-	contours := []poly{circle(12, 9)}
+	nPoints := 100000
 
-	targetDist := 6.0
+	points := make([]vec.Vec, 0, nPoints)
+	lines := make([]vec.Vec, 0, nPoints-1)
 
-	P, D := 0.016, -0.08
+	plot := func(v vec.Vec) {
+		points = append(points, v)
+		if len(points) > 1 {
+			v.Sub(points[len(points)-2])
+			lines = append(lines, v)
+		}
+	}
 
-	nContours := 72
+	// The "seed"
+	nSeed := 40
+	for i := 0; i < nSeed; i++ {
+		frac := float64(i) / float64(nSeed)
+		p := vec.NewPolar(10+targetDist*frac, 2*math.Pi*frac)
+		plot(p)
+	}
 
-	for k := 1; k < nContours; k++ {
-		follow := contours[len(contours)-1]
+	// The path
 
-		start := vec.NewXY(12+float64(k)*targetDist*1.2, 0)
-		particle := start
-		vel := vec.NewXY(0, -2)
+	targetSpeed := 3.0
 
-		contour := poly{}
-		contour.verts = append(contour.verts, particle)
+	//lastSpeed := 4.0
+	//lastDist := targetDist
 
-		lastDist := targetDist
-		for j := 0; j < 4000; j++ {
-			dist, pt := 100.0, vec.Vec{}
-			for i := 0; i < len(follow.verts); i++ {
-				d, p := PointToSegment(particle, follow.verts[i], follow.lines[i])
-				if d < dist {
-					dist = d
-					pt = p
-				}
+	particle := points[len(points)-1]
+	vel := vec.NewXY(0, 4)
+	for i := nSeed; i < nPoints; i++ {
+		closestDist := 100.0
+		var closestPoint vec.Vec
+		for j := 0; j < len(lines)-20; j++ {
+			dist, pt := PointToSegment(particle, points[j], lines[j])
+			if dist < closestDist {
+				closestDist = dist
+				closestPoint = pt
 			}
-			correction := 0.0
-			correction += (dist - targetDist) * P
-			correction += (lastDist - dist) * D
-			lastDist = dist
-			steer := *pt.Sub(particle).Times(correction)
-
-			vel.Add(steer)
-			speed := vec.Mag(vel)
-			if speed > 4 {
-				vel.Times(4 / speed)
-			} else if speed < 2 {
-				vel.Times(2 / speed)
-			}
-
-			noiseMag := 0.2
-			noise := vec.NewPolar(rand.Float64()*noiseMag, rand.Float64()*2*math.Pi)
-			vel.Add(noise)
-
-			particle.Add(vel)
-
-			//if j > 10 && vec.Dist(particle, start) < 4 {
-			//	break
-			//}
-			theta := vec.Theta(particle)
-			if j > 10 && theta > 0 && theta < 0.04 {
-				break
-			}
-
-			contour.verts = append(contour.verts, particle)
 		}
 
-		contour.computeLines()
-		contours = append(contours, contour)
+		radial := vec.New(particle)
+		radial.Sub(closestPoint)
+		forward := vec.Norm(radial)
+		forward.Div(vec.Mag(forward))
 
-		fmt.Printf("%d contours drawn.\n", k)
+		/*speed := vec.Dot(vel, forward)
 
+		distError := targetDist - closestDist
+		speedError := targetSpeed - speed
+
+		P := 0.04
+		D := -0.01
+
+		radial.Times(distError*P + (closestDist-lastDist)*D)
+		forward.Times(speedError*P + (speed-lastSpeed)*D)
+		steer := *radial.Add(forward)
+
+		steerMag := vec.Mag(steer)
+		if steerMag > 0.4 {
+			steer.Times(0.4 / steerMag)
+		}
+
+		lastDist = closestDist
+		lastSpeed = speed
+
+		vel.Add(steer)*/
+
+		radmag := vec.Mag(radial)
+		radial.Times((targetDist - closestDist) / radmag)
+
+		forward.Times(targetSpeed).Add(radial)
+
+		forward.Times(0.6)
+		vel.Times(0.4)
+		vel.Add(forward)
+
+		eps := 0.02
+		vel.X += (rand.Float64()*2 - 1) * eps
+		vel.Y += (rand.Float64()*2 - 1) * eps
+
+		particle.Add(vel)
+		plot(particle)
+
+		targetDist -= (targetDist - minTargetDistance) / float64(nPoints)
+
+		if i%1000 == 999 {
+			fmt.Printf("%d points done\n", i+1)
+		}
 	}
+
+	// Write output
 
 	path := fmt.Sprintf("out.svg")
 	file, err := os.Create(path)
@@ -160,15 +116,18 @@ func main() {
 		os.Exit(-1)
 	}
 
+	w, h := 1000, 1000
+
 	canvas := svg.New(file)
 	canvas.Start(w, h)
 	canvas.Translate(w/2, h/2)
-
-	for _, c := range contours {
-		drawPoly(canvas, c)
+	x, y := make([]int, 0, len(points)), make([]int, 0, len(points))
+	for i := 0; i < len(points); i++ {
+		x = append(x, int(points[i].X))
+		y = append(y, int(points[i].Y))
 	}
+	canvas.Polyline(x, y, "fill: none; stroke: black; stroke-width: 1.2; stroke-linejoin: round")
 
 	canvas.Gend()
 	canvas.End()
-
 }
