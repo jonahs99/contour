@@ -12,11 +12,10 @@ import (
 )
 
 func main() {
-	targetDist := 7.0
-	minTargetDistance := 1.0
-	//P, D := 0.016, -0.08
+	targetDist := 4.0
+	//minTargetDistance := 1.0
 
-	nPoints := 100000
+	nPoints := 8000
 
 	points := make([]vec.Vec, 0, nPoints)
 	lines := make([]vec.Vec, 0, nPoints-1)
@@ -39,17 +38,21 @@ func main() {
 
 	// The path
 
-	targetSpeed := 3.0
+	targetSpeed := 2.0
 
 	//lastSpeed := 4.0
 	//lastDist := targetDist
 
+	lastControlError := vec.Vec{}
+	cumControlError := vec.Vec{}
+
 	particle := points[len(points)-1]
 	vel := vec.NewXY(0, 4)
+
 	for i := nSeed; i < nPoints; i++ {
 		closestDist := 100.0
 		var closestPoint vec.Vec
-		for j := 0; j < len(lines)-20; j++ {
+		for j := 1; j < len(points)-20; j++ {
 			dist, pt := PointToSegment(particle, points[j], lines[j])
 			if dist < closestDist {
 				closestDist = dist
@@ -62,45 +65,55 @@ func main() {
 		forward := vec.Norm(radial)
 		forward.Div(vec.Mag(forward))
 
-		/*speed := vec.Dot(vel, forward)
-
-		distError := targetDist - closestDist
-		speedError := targetSpeed - speed
-
-		P := 0.04
-		D := -0.01
-
-		radial.Times(distError*P + (closestDist-lastDist)*D)
-		forward.Times(speedError*P + (speed-lastSpeed)*D)
-		steer := *radial.Add(forward)
-
-		steerMag := vec.Mag(steer)
-		if steerMag > 0.4 {
-			steer.Times(0.4 / steerMag)
-		}
-
-		lastDist = closestDist
-		lastSpeed = speed
-
-		vel.Add(steer)*/
+		//speed := vec.Dot(vel, forward)
 
 		radmag := vec.Mag(radial)
 		radial.Times((targetDist - closestDist) / radmag)
 
 		forward.Times(targetSpeed).Add(radial)
 
-		forward.Times(0.6)
-		vel.Times(0.4)
-		vel.Add(forward)
+		// forward is the target
+		P, I, D := 0.18, 0.00, 0.01
 
-		eps := 0.02
+		controlError := vec.New(forward)
+		controlError.Sub(vel)
+
+		steerP := vec.New(controlError)
+		steerP.Times(P)
+
+		cumControlError.Add(controlError)
+		steerI := vec.New(cumControlError)
+		steerI.Times(I)
+
+		steerD := vec.New(controlError)
+		steerD.Sub(lastControlError)
+		steerD.Times(D)
+		lastControlError = controlError
+
+		vel.Add(steerP)
+		vel.Add(steerI)
+		vel.Add(steerD)
+
+		eps := 0.4
 		vel.X += (rand.Float64()*2 - 1) * eps
 		vel.Y += (rand.Float64()*2 - 1) * eps
 
+		// Are we crossing the line?
+		for j := 1; j < len(points)-20; j++ {
+			t1, t2, intersect := vec.Intersect(particle, vel, points[j], lines[j])
+			if intersect == 1 && 0 < t1 && t1 < 1 && 0 < t2 && t2 < 1 {
+				// Scale back!
+				fmt.Println(t1, t2, intersect)
+				fmt.Println(j, len(points)-1)
+				vel.Times(t1 * 0.5)
+			}
+		}
+
+		// Advance the particle
 		particle.Add(vel)
 		plot(particle)
 
-		targetDist -= (targetDist - minTargetDistance) / float64(nPoints)
+		//targetDist -= (targetDist - minTargetDistance) / float64(nPoints)
 
 		if i%1000 == 999 {
 			fmt.Printf("%d points done\n", i+1)
